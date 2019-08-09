@@ -34,95 +34,458 @@ bool ESLPass::doInitialization(Module &m) {
   if (clock_period_ == 0.0)
     clock_period_ = DEFAULT_CLOCK_PERIOD;
 }
+#if 0
+void RemoveStruct::structMapType(Type* val_ty, vector<int> &val_offset_list, map<vector<int>, Type*> &val_map_type) {
+  int struct_val_elements = val_ty->getStructNumElements();
+  for (int i = 0; i < struct_val_elements; i++) {
+    if (val_ty->getStructElementType(i)->isIntegerTy()) {
+      //  int
+      val_offset_list.push_back(i);
+      val_map_type.insert(map<vector<int>, Type*>::value_type(val_offset_list, val_ty->getStructElementType(i)));
+      val_offset_list.pop_back();
+    } else if (val_ty->getStructElementType(i)->isArrayTy()) {
+      //  array
+      val_offset_list.push_back(i);
+      structArrayMapType(val_ty->getStructElementType(i), val_offset_list, val_map_type);
+      val_offset_list.pop_back();
+    } else if (val_ty->getStructElementType(i)->isStructTy()) {
+      //  struct
+      val_offset_list.push_back(i);
+      structMapType(val_ty->getStructElementType(i), val_offset_list, val_map_type);
+      val_offset_list.pop_back();
+    } else {
+      outs() << "This Type is not considered! " << val_ty->getStructElementType(i) << "\n";
+      assert(0);
+    }
+  }
+}
 
-void RemoveStruct::changeBitCast(){
-  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
+void RemoveStruct::structArrayMapType(Type* val_ty, vector<int> &val_offset_list, map<vector<int>, Type*> &val_map_type) {
+  //outs() << "Array Num: " << val_ty->getArrayNumElements() << "\n";
+  if (val_ty->getArrayElementType()->isIntegerTy()) {
+    //  int
+    for (int i = 0; i < val_ty->getArrayNumElements(); ++i) {
+      val_offset_list.push_back(i);
+      val_map_type.insert(map<vector<int>, Type*>::value_type(val_offset_list, val_ty->getArrayElementType()));
+      val_offset_list.pop_back();
+    }
+  } else if (val_ty->getArrayElementType()->isArrayTy()) {
+    //  array
+    assert(0);//TODO
+    for (int i = 0; i < val_ty->getArrayNumElements(); ++i) {
+      val_offset_list.push_back(i);
+      structArrayMapType(val_ty->getArrayElementType(), val_offset_list, val_map_type);
+      val_offset_list.pop_back();
+    }
+  } else if (val_ty->getArrayElementType()->isStructTy()) {
+    //  struct
+    assert(0);//TODO
+    for (int i = 0; i < val_ty->getArrayNumElements(); ++i) {
+      val_offset_list.push_back(i);
+      structMapType(val_ty->getArrayElementType(), val_offset_list, val_map_type);
+      val_offset_list.pop_back();
+    }
+  } else {
+    outs() << "This Type is not considered! " << val_ty->getArrayElementType() << "\n";
+    assert(0);
+  }
+}
+#endif
+
+
+#if 0
+void RemoveStruct::memcpy(Instruction* instr, SmallVector<Instruction*,128> *WorkListLoad) {
+  llvm::IntrinsicInst* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst> (instr);
+  if (intrinsic->getIntrinsicID() == llvm::Intrinsic::memcpy) {
+    assert(intrinsic->getNumOperands() >= 2);
+    llvm::Value* intrinsic_0 = intrinsic->getOperand(0);
+    llvm::Value* intrinsic_1 = intrinsic->getOperand(1);
+  }
+}
+
+Value* RemoveStruct::memcpyParm(Value* parameter) {
+  if (parameter->getType()->isStructTy()) {
+    return parameter;
+  } else if (parameter->getType()->isArrayTy()) {
+    return parameter;
+  }else if (llvm::isa<llvm::Instruction>(parameter)) {
+    llvm::Instruction* intrinsic_instr = llvm::dyn_cast<llvm::Instruction>(parameter);
+    if (intrinsic_instr->getOpcode() == llvm::Instruction::BitCast) {
+
+    } else if (intrinsic_instr->getOpcode() == llvm::Instruction::GetElementPtr) {
+
+    } else if (intrinsic_instr->getOpcode() == llvm::Instruction::Alloca) {
+
+    }
+  } else if (llvm::isa<llvm::ConstantExpr>(parameter)) {
+    llvm::ConstantExpr* instrExpr = llvm::dyn_cast<llvm::ConstantExpr>(parameter);
+    if (instrExpr->getOpcode() == llvm::Instruction::BitCast) {
+
+    } else if (instrExpr->getOpcode() == llvm::Instruction::GetElementPtr) {
+
+    }
+  }
+}
+#endif
+
+
+
+void RemoveStruct::structMemoryArrange(Type* val_ty, vector<int> val_offset_list, map<vector<int>, type_width> &val_map, int &use_width) {
+  int step_width = 1;
+  int val_width;
+  int struct_val_elements = val_ty->getStructNumElements();
+  for (int i = 0; i < struct_val_elements; i++) {
+    if (val_ty->getStructElementType(i)->isIntegerTy() ||
+        val_ty->getStructElementType(i)->isDoubleTy() ||
+        val_ty->getStructElementType(i)->isFloatTy()) {
+      val_width = val_ty->getStructElementType(i)->getPrimitiveSizeInBits();
+      while (use_width % val_width != 0) {
+        use_width += step_width;
+      }
+      val_offset_list.push_back(i);
+      val_map.insert(map<vector<int>, type_width>::value_type
+          (val_offset_list, type_width(val_ty->getStructElementType(i), use_width)));
+      val_offset_list.pop_back();
+      use_width += val_width;
+      outs() << "  " << use_width;
+    } else if (val_ty->getStructElementType(i)->isArrayTy()) {
+      if (val_ty->getStructElementType(i)->getArrayElementType()->isIntegerTy() ||
+          val_ty->getStructElementType(i)->isDoubleTy() ||
+          val_ty->getStructElementType(i)->isFloatTy()) {
+        val_offset_list.push_back(i);
+        for (int j = 0; j < val_ty->getStructElementType(i)->getArrayNumElements(); ++j) {
+          val_width = val_ty->getStructElementType(i)->getArrayElementType()->getPrimitiveSizeInBits();
+          while (use_width % val_width != 0) {
+            use_width += step_width;
+          }
+          val_offset_list.push_back(j);
+          val_map.insert(map<vector<int>, type_width>::value_type
+              (val_offset_list, type_width(val_ty->getStructElementType(i)->getArrayElementType(), use_width)));
+          val_offset_list.pop_back();
+          use_width += val_width;
+          outs() << "  " << use_width;
+        }
+        val_offset_list.pop_back();
+      } else if (val_ty->getStructElementType(i)->getArrayElementType()->isArrayTy()) {
+        assert(0);//TODO
+      } else if (val_ty->getStructElementType(i)->getArrayElementType()->isStructTy()) {
+        assert(0);//TODO
+      }
+
+    } else if (val_ty->getStructElementType(i)->isStructTy()) {
+      int align = 0;
+      StructAlign(val_ty->getStructElementType(i), align);
+      if (use_width % align == 0) {
+        val_offset_list.push_back(i);
+        structMemoryArrange(val_ty->getStructElementType(i), val_offset_list, val_map, use_width);
+        val_offset_list.pop_back();
+      } else {
+        use_width += align - (use_width % align);
+        val_offset_list.push_back(i);
+        structMemoryArrange(val_ty->getStructElementType(i), val_offset_list, val_map, use_width);
+        val_offset_list.pop_back();
+      }
+    } else {
+      outs() << "This Type is not considered! " << val_ty->getStructElementType(i) << "\n";
+      assert(0);
+    }
+  }
+  int last = 0;
+  StructAlign(val_ty, last);
+  if (use_width % last != 0) {
+    use_width += last - (use_width % last);
+  }
+  outs() << "  " << use_width;
+}
+
+// actual_width = num * width; if the wrong position, flag is false;
+void RemoveStruct::structArrangeTestFlag(Type* val_ty, int actual_width, bool &flag, int &use_width) {
+  int step_width = 1;
+  int val_width;
+  int struct_val_elements = val_ty->getStructNumElements();
+  for (int i = 0; i < struct_val_elements; i++) {
+    if (val_ty->getStructElementType(i)->isIntegerTy() ||
+        val_ty->getStructElementType(i)->isDoubleTy() ||
+        val_ty->getStructElementType(i)->isFloatTy()) {
+      val_width = val_ty->getStructElementType(i)->getPrimitiveSizeInBits();
+      while (use_width % val_width != 0) {
+        use_width += step_width;
+      }
+      use_width += val_width;
+      outs() << "  " << use_width;
+    } else if (val_ty->getStructElementType(i)->isArrayTy()) {
+      if (val_ty->getStructElementType(i)->getArrayElementType()->isIntegerTy() ||
+          val_ty->getStructElementType(i)->isDoubleTy() ||
+          val_ty->getStructElementType(i)->isFloatTy()) {
+        for (int j = 0; j < val_ty->getStructElementType(i)->getArrayNumElements(); ++j) {
+          val_width = val_ty->getStructElementType(i)->getArrayElementType()->getPrimitiveSizeInBits();
+          while (use_width % val_width != 0) {
+            use_width += step_width;
+          }
+          use_width += val_width;
+          outs() << "  " << use_width;
+        }
+      } else if (val_ty->getStructElementType(i)->getArrayElementType()->isArrayTy()) {
+        assert(0);//TODO
+      } else if (val_ty->getStructElementType(i)->getArrayElementType()->isStructTy()) {
+        assert(0);//TODO
+      }
+
+    } else if (val_ty->getStructElementType(i)->isStructTy()) {
+      int align = 0;
+      StructAlign(val_ty->getStructElementType(i), align);
+      if (use_width % align == 0) {
+        structArrangeTestFlag(val_ty->getStructElementType(i), actual_width, flag, use_width);
+      } else {
+        if (actual_width >= use_width && actual_width < (use_width + align - (use_width % align))) {
+          flag = false;
+        }
+        use_width += align - (use_width % align);
+        structArrangeTestFlag(val_ty->getStructElementType(i), actual_width, flag, use_width);
+      }
+
+    } else {
+      outs() << "This Type is not considered! " << val_ty->getStructElementType(i) << "\n";
+      assert(0);
+    }
+  }
+  int last = 0;
+  StructAlign(val_ty, last);
+  if (use_width % last != 0) {
+    if (actual_width >= use_width && actual_width < (use_width + last - (use_width % last))) {
+      flag = false;
+    }
+    use_width += last - (use_width % last);
+  }
+  outs() << "  " << use_width;
+}
+
+void RemoveStruct::structMemoryArrangePrint (map<vector<int>, type_width> val_map) {
+  map<vector<int> , type_width>::iterator iter;
+  outs()<<"\n";
+  for (iter = val_map.begin(); iter != val_map.end(); iter++) {
+    vector<int> temp = iter->first;
+    for (std::vector<int>::iterator it = temp.begin(); it != temp.end(); ++it) {
+      int list = *it;
+      outs() << list << "  ";
+    }
+    outs() << "\n";
+    outs() << "Type: " << *iter->second.type << "\n";
+    outs() << "width: " << iter->second.width << "\n";
+  }
+}
+
+
+
+void RemoveStruct::StructAlign(Type* val_ty, int &align) {
+  int struct_val_elements = val_ty->getStructNumElements();
+  for (int i = 0; i < struct_val_elements; i++) {
+    if (val_ty->getStructElementType(i)->isIntegerTy() ||
+        val_ty->getStructElementType(i)->isDoubleTy() ||
+        val_ty->getStructElementType(i)->isFloatTy()) {
+      if (val_ty->getStructElementType(i)->getPrimitiveSizeInBits() > align) {
+        align = val_ty->getStructElementType(i)->getPrimitiveSizeInBits(); }
+    } else if (val_ty->getStructElementType(i)->isArrayTy()) {
+      ArrayAlign(val_ty->getStructElementType(i), align);
+    } else if (val_ty->getStructElementType(i)->isStructTy()) {
+      StructAlign(val_ty->getStructElementType(i), align);
+    } else {
+      outs() << "This Type is not considered! " << val_ty->getStructElementType(i) << "\n";
+      assert(0);
+    }
+  }
+}
+
+void RemoveStruct::ArrayAlign(Type* val_ty, int &align) {
+  if (val_ty->getArrayElementType()->isIntegerTy() ||
+      val_ty->getArrayElementType()->isDoubleTy() ||
+      val_ty->getArrayElementType()->isFloatTy()) {
+    if (val_ty->getArrayElementType()->getPrimitiveSizeInBits() > align) {
+      align = val_ty->getArrayElementType()->getPrimitiveSizeInBits();
+    }
+  } else if (val_ty->getArrayElementType()->isArrayTy()) {
+    //  array
+    ArrayAlign(val_ty->getArrayElementType(), align);
+  } else if (val_ty->getArrayElementType()->isStructTy()) {
+    StructAlign(val_ty->getArrayElementType(), align);
+  } else {
+    outs() << "This Type is not considered! " << val_ty->getArrayElementType() << "\n";
+    assert(0);
+  }
+}
+
+void RemoveStruct::changeBitCast() {
+  SmallVector<Instruction*,128> *WorkListMove = new SmallVector<Instruction* ,128>();
+  SmallVector<Instruction*,128> *ListBitCastLoad = new SmallVector<Instruction* ,128>();
+  SmallVector<Instruction*,128> *ListBitCastGetelementPtr = new SmallVector<Instruction* ,128>();
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
     Function &F = *f;
     for (Function::iterator b = F.begin(); b != F.end(); ++b) {
       llvm::BasicBlock &B = *b;
       for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
-        llvm::Instruction* instr = &*itr;
-        if (instr->getOpcode() == llvm::Instruction::BitCast){
-          if (instr->getNumUses() == 0) {
-            WorkListLoad->push_back(instr);
-          } else if (instr->getOperand(0)->getType()->isPointerTy()) {
-            if (instr->getOperand(0)->getType()->getPointerElementType()->isStructTy()
-                && instr->getNextNode()->getOpcode() == llvm::Instruction::Load
-                && instr->getPrevNode()->getOpcode() == llvm::Instruction::GetElementPtr) {
-              //get the BitWidth from BitCast
-              int bitcast_bitwidth = instr->getType()->getPointerElementType()->getIntegerBitWidth();
-              Type* type_zextI = Type::getIntNTy(module_->getContext(), bitcast_bitwidth);
-
-              int use_width = 0;
-              int num_operand = instr->getOperand(0)->getType()->getPointerElementType()->getStructNumElements();
-              int path_size = 0;
-              int step_size = 8;
-              int start = 0;
-              Instruction* temp;
-              //Instruction* xorI;
-              vector<Instruction*> vec;
-              int flag = -1;
-              for (int i = 0; i < num_operand; ++i) {
-                use_width = instr->getOperand(0)->getType()->getPointerElementType()->getStructElementType(i)->getIntegerBitWidth();
-                while (path_size % use_width != 0){
-                  path_size += step_size;
-                }
-                if (path_size > bitcast_bitwidth) {path_size = 0;}
-                //range from start to path_size,[start,path_size]
-                start = path_size;
-                if (start == bitcast_bitwidth) {start = 0;path_size = 0;}
-                //outs() << "start size :" << start << "  path_size :" << path_size << "\n";
-                path_size += use_width;
-                assert(path_size <= bitcast_bitwidth);
-                vector<Value *> IdxList;
-                IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
-                IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
-
-                //TODO i = num_operand to get out loop
-                if (path_size == bitcast_bitwidth) {i = num_operand;}
-
-                ArrayRef<Value*> list(IdxList);
-                GetElementPtrInst* ptrInst_new =GetElementPtrInst::CreateInBounds(
-                  dyn_cast<PointerType> (instr->getOperand(0)->getType())->getElementType(),instr->getOperand(0), list, "", instr);
-                llvm::LoadInst* load_GEP = new LoadInst(ptrInst_new, "", instr);
-                Instruction* zextI = CastInst::Create(Instruction::ZExt, load_GEP, type_zextI, "", instr);
-                Instruction* shlI = BinaryOperator::Create(llvm::Instruction::Shl, zextI,
-                     ConstantInt::get(type_zextI, start),"",instr);
-                if (start == 0) {
-                  flag++;
-                  if (flag > 0) {vec.push_back(temp);flag = 0;}
-                  temp = shlI;
-                } else {
-                  if (path_size < bitcast_bitwidth) {
-                    Instruction*xorI = BinaryOperator::Create(llvm::Instruction::Xor, shlI, temp,"",instr);
-                    temp = xorI;
-                  } else {
-                    Instruction*xorI = BinaryOperator::Create(llvm::Instruction::Xor, shlI, temp,"");
-                    temp = xorI;
-                  }
-                }
-              }
-              vec.push_back(temp);
-              ReplaceInstWithInst(B.getInstList(), ++itr, vec.front());
-              //outs() << "bitcast_bitwidth :" << bitcast_bitwidth <<" vec.size() " << vec.size()<< "\n";
+        Instruction* instr = &*itr;
+        if (instr->getOpcode() == Instruction::BitCast) {
+          if (instr->getNumUses() == 0) { WorkListMove->push_back(instr); }
+          else if (instr->getOperand(0)->getType()->isPointerTy()) {
+            outs() << "bitcast getType isPointerTy!  " << getLabel(instr) << "\n";
+          }
+        } else if (instr->getOpcode() == Instruction::Load) {
+          if (isa<Instruction> (instr->getOperand(0))) {
+            Instruction* instr_bitcast = dyn_cast<Instruction> (instr->getOperand(0));
+            if (instr_bitcast->getOpcode() == Instruction::BitCast &&
+                instr_bitcast->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+              ListBitCastLoad->push_back(instr_bitcast);
             }
-            if (instr->getNumUses() == 0) {WorkListLoad->push_back(instr);}
+          }
+        } else if (instr->getOpcode() == Instruction::GetElementPtr) {
+          if (isa<Instruction> (instr->getOperand(0))) {
+            Instruction* instr_bitcast = dyn_cast<Instruction> (instr->getOperand(0));
+            if (instr_bitcast->getOpcode() == Instruction::BitCast &&
+                instr_bitcast->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+              ListBitCastGetelementPtr->push_back(instr_bitcast);
+            }
           }
         }
       }
     }
   }
 
-  while (!WorkListLoad->empty()) {
-    Instruction *instruction = WorkListLoad->pop_back_val();
+  while (!ListBitCastLoad->empty()) {
+     Instruction *instruction = ListBitCastLoad->pop_back_val();
+     BitCastLoad(instruction);
+     instruction->eraseFromParent();
+   }
+
+  while (!ListBitCastGetelementPtr->empty()) {
+     Instruction *instruction = ListBitCastGetelementPtr->pop_back_val();
+     BitCastGetelementPtr(instruction);
+   }
+  while (!WorkListMove->empty()) {
+    Instruction *instruction = WorkListMove->pop_back_val();
     instruction->eraseFromParent();
   }
 }
 
-void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1, Instruction* instr, SmallVector<Instruction*,128> *WorkListLoad){
+void RemoveStruct::BitCastGetelementPtr(Instruction* instr) {
+  SmallVector<Instruction*,128> *WorkListDel = new SmallVector<Instruction* ,128>();
+  Instruction* getelement_inst = instr->getNextNode();
+  assert(getelement_inst->getNumOperands() == 2);
+  int bit_width = getelement_inst->getOperand(0)->getType()->getPointerElementType()->getPrimitiveSizeInBits();
+  Value* op_1 = getelement_inst->getOperand(1);
+  ConstantInt* width;
+  int byte_nums;
+  if (isa<llvm::ConstantInt>(op_1)) {
+    width = llvm::dyn_cast<llvm::ConstantInt>(op_1);
+    byte_nums = width->getSExtValue();
+  }
+
+  Value* val = instr->getOperand(0);
+  Type* val_ty = val->getType()->getPointerElementType();
+  int bitcast_bitwidth = instr->getType()->getPointerElementType()->getPrimitiveSizeInBits();
+  int actual_width = bitcast_bitwidth * byte_nums;
+  bool flag = true;
+  int use_width = 0;
+//  outs() << "sizeof : " << sizeof(*val_ty) << " *8 = " << sizeof(*val_ty) * 8 << "\n";
+  structArrangeTestFlag(val_ty, actual_width, flag, use_width);
+
+  if (flag == false) {
+    outs() <<"bitcast flag : flase " <<"\n";
+    for (Value::user_iterator UI = getelement_inst->user_begin(), E =getelement_inst->user_end(); UI != E; ++UI) {
+      User *U = *UI;
+      assert(isa<Instruction> (U));
+      Instruction* CI = dyn_cast<Instruction> (U);
+      if (CI->getOpcode() == llvm::Instruction::BitCast) {
+        WorkListDel->push_back(CI);
+        for (Value::user_iterator UI2 = CI->user_begin(), E2 =CI->user_end(); UI2 != E2; ++UI2) {
+          User *U2 = *UI2;
+          assert(isa<Instruction> (U2));
+          Instruction* CI_2 = dyn_cast<Instruction> (U2);
+          if (CI_2->getOpcode() == llvm::Instruction::Load) {
+            Value* zero = ConstantInt::get(CI_2->getType(), 0);
+            CI_2->replaceAllUsesWith(zero);
+            WorkListDel->push_back(CI_2);
+          } else if (CI_2->getOpcode() == llvm::Instruction::Store) {
+            WorkListDel->push_back(CI_2);
+          } else {
+            assert(0);
+          }
+        }
+      } else if (CI->getOpcode() == llvm::Instruction::Load) {
+        Value* zero = ConstantInt::get(CI->getType(), 0);
+        CI->replaceAllUsesWith(zero);
+        WorkListDel->push_back(CI);
+      } else if (CI->getOpcode() == llvm::Instruction::Store) {
+        WorkListDel->push_back(CI);
+      } else {
+        assert(0);
+      }
+    }
+    WorkListDel->push_back(instr);
+    WorkListDel->push_back(instr->getNextNode());
+  }
+  while (!WorkListDel->empty()) {
+    Instruction *instruction = WorkListDel->pop_back_val();
+    instruction->eraseFromParent();
+  }
+}
+//TODO
+void RemoveStruct::BitCastLoad(Instruction* instr) {
+  Value* val = instr->getOperand(0);
+  Type* val_ty = val->getType()->getPointerElementType();
+
+  // Get the list of value's Type in memory
+  int use_width = 0;
+  vector<int> val_offset_list;
+  map<vector<int>, type_width> val_map;
+  structMemoryArrange(val_ty, val_offset_list, val_map, use_width);
+  //structMemoryArrangePrint(val_map);
+  // change BitCast Instruction by the Type list and bitcast_bitwidth
+  int bitcast_bitwidth = instr->getType()->getPointerElementType()->getPrimitiveSizeInBits();
+  Type* type_zextI = Type::getIntNTy(module_->getContext(), bitcast_bitwidth);
+
+  //assert(use_width == bitcast_bitwidth);
+
+  Instruction* Inst_temp;
+  map<vector<int> , type_width>::iterator iter;
+  for (iter = val_map.begin(); iter != val_map.end(); iter++) {
+    int val_front_distance = iter->second.width;
+    Type* val_current_type = iter->second.type;
+    vector<Value *> val_list;
+    val_list.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+    vector<int> vec_temp = iter->first;
+    for (std::vector<int>::iterator it = vec_temp.begin(); it != vec_temp.end(); ++it) {
+      val_list.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), *it));
+    }
+    ArrayRef<Value*> list(val_list);
+    GetElementPtrInst * ptrInst_new = GetElementPtrInst::CreateInBounds(
+       dyn_cast<PointerType> (instr->getOperand(0)->getType())->getElementType(), instr->getOperand(0), list, "", instr);
+    llvm::LoadInst* load_GEP = new LoadInst(ptrInst_new, "", instr);
+    Instruction* zextI = CastInst::Create(Instruction::ZExt, load_GEP, type_zextI, "", instr);
+    Instruction* shlI = BinaryOperator::Create(llvm::Instruction::Shl, zextI,
+        ConstantInt::get(type_zextI, val_front_distance), "", instr);
+    if (iter == val_map.begin()) {
+      Inst_temp = shlI;
+    } else if (val_front_distance + val_current_type->getPrimitiveSizeInBits() < bitcast_bitwidth) {
+      Instruction* xorI = BinaryOperator::Create(llvm::Instruction::Xor, shlI, Inst_temp, "", instr);
+      Inst_temp = xorI;
+    }
+    if (val_front_distance + val_current_type->getPrimitiveSizeInBits() == bitcast_bitwidth) {
+      Instruction* xorI = BinaryOperator::Create(llvm::Instruction::Xor, shlI, Inst_temp, "");
+      ReplaceInstWithInst(instr->getNextNode(), xorI);
+      //ReplaceInstWithInst(B.getInstList(), ++itr, xorI);
+      break;
+    }
+  }
+
+}
+
+
+
+
+#if 0
+void RemoveStruct::memcpySecondConstantExpr(Value* memcpy_from,Value* memcpy_to, Instruction* instr, SmallVector<Instruction*,128> *WorkListLoad){
   //outs() << "The second element of llvm.memcpy is ConstantExpr!" << "\n";
-  llvm::ConstantExpr* instrExpr = llvm::dyn_cast<llvm::ConstantExpr>(intrinsic_1);
+  llvm::ConstantExpr* instrExpr = llvm::dyn_cast<llvm::ConstantExpr>(memcpy_to);
   assert(instrExpr->getOpcode() == llvm::Instruction::BitCast);
   // When (instr)intrinsic->getOperand(1)->getOperand(0) is ConstantStruct
   // memcpy = (1)getelementPtrInst alloca;  (2)StoreInst (global value, (1))
@@ -134,6 +497,7 @@ void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1
       //get parameters from GlobalVariable gvar
       if (gvar->hasInitializer()) {
         Value *const_gv = gvar->getInitializer();
+
         //outs() << "GlobalVariable->getType() " << *const_gv->getType() << "\n";
         if (llvm::isa<llvm::ConstantStruct>(const_gv)) {
           ConstantStruct * global_element = llvm::dyn_cast<llvm::ConstantStruct>(const_gv);
@@ -148,7 +512,7 @@ void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1
             IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
             ArrayRef<Value*> list(IdxList);
             GetElementPtrInst* ptrInst_new =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
-                alloca_val->getType())->getElementType(), alloca_val, list, "", instr);
+                memcpy_from->getType())->getElementType(), memcpy_from, list, "", instr);
             StoreInst *ptr = new StoreInst(val_gv_op, ptrInst_new,instr);
           }
         }
@@ -181,7 +545,7 @@ void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1
 
           ArrayRef<Value*> allocaArrayRef(allocaList);
           GetElementPtrInst* allocaInst =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
-                  alloca_val->getType())->getElementType(), alloca_val, allocaArrayRef, "", instr);
+                  memcpy_from->getType())->getElementType(), memcpy_from, allocaArrayRef, "", instr);
           StoreInst *storePtr = new StoreInst(loadPtr, allocaInst, instr);
           IdxList.pop_back();
           allocaList.pop_back();
@@ -209,7 +573,7 @@ void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1
               IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
               ArrayRef<Value*> list(IdxList);
               GetElementPtrInst* ptrInst_new =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
-                  alloca_val->getType())->getElementType(), alloca_val, list, "", instr);
+                  memcpy_from->getType())->getElementType(), memcpy_from, list, "", instr);
               StoreInst *ptr = new StoreInst(val_gv_op, ptrInst_new, instr);
             }
           }
@@ -224,44 +588,10 @@ void RemoveStruct::memcpySecondConstantExpr(Value* alloca_val,Value* intrinsic_1
     outs() << "The ConstantExpr first element is not StructType!" << "\n";
   }
 }
+#endif
 
-void RemoveStruct::memcpy(Instruction* instr, SmallVector<Instruction*,128> *WorkListLoad) {
-  llvm::IntrinsicInst* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst> (instr);
-  if (intrinsic->getIntrinsicID() == llvm::Intrinsic::memcpy) {
-    //To get global variable & alloca address from llvm.memcpy
-    assert(intrinsic->getNumOperands() >= 2);
-    //process first parameter intrinsic->getOperand(0)
-    llvm::Value* intrinsic_0 = intrinsic->getOperand(0);
-    if (llvm::isa<llvm::Instruction>(intrinsic_0)) {
-      llvm::Instruction* intrinsic_instr = llvm::dyn_cast<llvm::Instruction>(intrinsic_0);
-      if (intrinsic_instr->getOpcode() == llvm::Instruction::BitCast) {
-        outs() << "get alloca from BitCast Instruction!" << "\n";
-      } else if ((intrinsic_instr->getOpcode() == llvm::Instruction::Alloca)){
-        outs() << "get alloca from Alloca Instruction!" << "\n";
-      } else {
-        outs() << "The condition is not considerd!" << "\n";
-        assert(0);
-      }
-      //alloca_val represents a pointer of alloca
-      llvm::Value* alloca_val = intrinsic_instr->getOperand(0);
-      outs() <<  "alloca_val Type is " << *alloca_val->getType()<<  " Value is " << getLabel(alloca_val) << "\n";
-
-      //get global variable(struct_op)  from intrinsic_1
-      llvm::Value* intrinsic_1 = intrinsic->getOperand(1);
-      if (intrinsic_1->getType()->isStructTy()) {
-        outs() << "The second element of llvm.memcpy is Struct Variable!" << "\n";
-        llvm::Value* struct_op = intrinsic_1;
-        assert(0);//TODO
-      } else if (llvm::isa<llvm::ConstantExpr>(intrinsic_1)){
-        memcpySecondConstantExpr(alloca_val, intrinsic_1, instr, WorkListLoad);
-      } else {
-        outs() << "The second element of llvm.memcpy without Struct!" << "\n";
-      }
-    }
-  }
-}
 void RemoveStruct::changeMemcpy() {
-  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *WorkListMemcpy = new SmallVector<Instruction*,128>();
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
     Function &F = *f;
     for (Function::iterator b = F.begin(); b != F.end(); ++b) {
@@ -270,59 +600,228 @@ void RemoveStruct::changeMemcpy() {
         llvm::Instruction* instr = &*itr;
         //change IntrinsicInst's memcpy into equivalent instruction
         if (llvm::isa<llvm::IntrinsicInst> (instr)) {
-          memcpy(instr,WorkListLoad);
+          WorkListMemcpy->push_back(instr);
         }
       }
     }
   }
-  while (!WorkListLoad->empty()) {
-    Instruction *instruction = WorkListLoad->pop_back_val();
-    instruction->eraseFromParent();
+  while (!WorkListMemcpy->empty()) {
+    Instruction *instruction = WorkListMemcpy->pop_back_val();
+    memcpy(instruction);
   }
 }
 
-void RemoveStruct::removeLifetime() {
-  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
-  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
-    Function &F = *f;
-    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
-      llvm::BasicBlock &B = *b;
-      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
-        llvm::Instruction* instr = &*itr;
-        //change IntrinsicInst's memcpy into equivalent instruction
-        if (llvm::isa<llvm::IntrinsicInst>(instr)) {
-          llvm::IntrinsicInst* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst>(instr);
+#if 1
+void RemoveStruct::memcpy(Instruction* instr) {
+  SmallVector<Instruction*,128> *ListMemcpyPreInstr = new SmallVector<Instruction*,128>();
+  llvm::IntrinsicInst* intrinsic = llvm::dyn_cast<llvm::IntrinsicInst> (instr);
+  if (intrinsic->getIntrinsicID() == llvm::Intrinsic::memcpy) {
+    if (llvm::isa<llvm::Instruction>(intrinsic->getOperand(0))) {
+      Instruction* intrinsic_from = llvm::dyn_cast<Instruction>(intrinsic->getOperand(0));
+      Value* memcpy_from;
+      if (intrinsic_from->getOpcode() == Instruction::BitCast) {
+        //outs() << "get alloca from BitCast Instruction!" << "\n";
+        ListMemcpyPreInstr->push_back(intrinsic_from);
+        memcpy_from = intrinsic_from->getOperand(0);
+      } else if ((intrinsic_from->getOpcode() == Instruction::Alloca)){
+        //outs() << "get alloca from Alloca Instruction!" << "\n";
+        memcpy_from = intrinsic_from->getOperand(0);
+      } else if (intrinsic_from->getOpcode() == Instruction::GetElementPtr) {
+        //  %1 = alloca %struct.str,
+        //  %2 = getelementptr %struct.str, %struct.str* %1, i64 0, i32 0, i32 0
+        memcpy_from = intrinsic_from->getOperand(0);
+      }else {
+        outs() << "\n" <<"The condition is not considerd!" << "\n";
+        assert(0);
+      }
+      //outs() <<"\n"<<  "memcpy_from Type is " << *memcpy_from->getType()<<  " Value is " << getLabel(memcpy_from) << "\n";
 
-          if (intrinsic->getIntrinsicID() == llvm::Intrinsic::lifetime_start) {
-            WorkListLoad->push_back(instr);
-          } else if (intrinsic->getIntrinsicID() == llvm::Intrinsic::lifetime_end){
-            WorkListLoad->push_back(instr);
-          }
+      //get global variable(struct_op)  from intrinsic_1
+      llvm::Value* memcpy_to = intrinsic->getOperand(1);
+      if (memcpy_to->getType()->isStructTy()) {
+        outs() << "The second element of llvm.memcpy is Struct Variable!" << "\n";
+        assert(0);//TODO
+      } else if (llvm::isa<llvm::ConstantExpr>(memcpy_to)){
+        memcpyToConstantExpr(memcpy_from, memcpy_to, instr);
+      } else if (llvm::isa<llvm::GetElementPtrInst>(memcpy_to)) {
+        GetElementPtrInst* intrinsic_to = llvm::dyn_cast<GetElementPtrInst>(memcpy_to);
+        if (intrinsic_to->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+          memcpyToGetElementPtrInst(memcpy_from, intrinsic_to, instr);
+          // outs()<< "getSourceElementType "<< *intrinsic_to->getSourceElementType()<<"\n";
+          // outs()<< "getResultElementType "<<*intrinsic_to->getResultElementType()<<"\n";
         }
+      }else {
+        outs() << "The second element of llvm.memcpy without Struct!" << "\n";
       }
     }
   }
-  while (!WorkListLoad->empty()) {
-    Instruction *instruction = WorkListLoad->pop_back_val();
+  while (!ListMemcpyPreInstr->empty()) {
+    Instruction *instruction = ListMemcpyPreInstr->pop_back_val();
+    instruction->eraseFromParent();
+  }
+}
+#endif
+
+void RemoveStruct::memcpyToGetElementPtrInst(Value* memcpy_from, GetElementPtrInst* intrinsic_to, Instruction* instr) {
+  SmallVector<Instruction*,128> *WorkListDel = new SmallVector<Instruction*,128>();
+  WorkListDel->push_back(instr);
+  Instruction* intrinsic_from = llvm::dyn_cast<Instruction>(instr);
+  int StructNumElements = intrinsic_to->getSourceElementType()->getStructNumElements();
+  Value* struct_val = intrinsic_to->getOperand(0);
+  int use_width = 0;
+  Type* val_ty = struct_val->getType()->getPointerElementType();
+  vector<int> val_offset_list;
+  map<vector<int>, type_width> val_map;
+  structMemoryArrange(val_ty, val_offset_list, val_map, use_width);
+  for (int i = 0; i < StructNumElements; ++i) {
+    //set the address value(i64 0) of list by myself
+    vector<Value *> IdxList;
+    IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+    IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
+    ArrayRef<Value*> list(IdxList);
+    GetElementPtrInst* from_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+         memcpy_from->getType())->getElementType(), memcpy_from, list, "", instr);
+    GetElementPtrInst* to_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+        struct_val->getType())->getElementType(), struct_val, list, "", instr);
+    LoadInst* load_ptr = new LoadInst(to_ptr, "", instr);
+    StoreInst* store_ptr = new StoreInst(load_ptr, from_ptr, instr);
+  }
+  while (!WorkListDel->empty()) {
+    Instruction *instruction = WorkListDel->pop_back_val();
     instruction->eraseFromParent();
   }
 }
 
+void RemoveStruct::memcpyToConstantExpr(Value* memcpy_from,Value* memcpy_to, Instruction* instr) {
+  SmallVector<Instruction*,128> *WorkListDel = new SmallVector<Instruction*,128>();
+  Value* op_2 = instr->getOperand(2);
+  ConstantInt* width;
+  int len;
+  if (isa<llvm::ConstantInt>(op_2)) {
+    width = llvm::dyn_cast<llvm::ConstantInt>(op_2);
+    len = width->getSExtValue();
+  } else {
+    assert(0);
+  }
+  ConstantExpr* instrExpr = llvm::dyn_cast<llvm::ConstantExpr>(memcpy_to);
+  if (instrExpr->getOpcode() == Instruction::BitCast) {
+    //  llvm.memcpy.p0i8.p0i8.i64(i8* %2, i8* bitcast (%struct.str* @global to i8*), i64 28, i32 4, i1 false)
+    if (instrExpr->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+      WorkListDel->push_back(instr);
+      int bitcast_width = instrExpr->getType()->getPointerElementType()->getPrimitiveSizeInBits();
+      Type* val_ty = instrExpr->getOperand(0)->getType()->getPointerElementType();
+      int use_width = 0;
+      vector<int> val_offset_list;
+      map<vector<int>, type_width> val_map;
+      structMemoryArrange(val_ty, val_offset_list, val_map, use_width);
+      structMemoryArrangePrint(val_map);
+      //TODO why sizeof(*val_ty) is 24 not the right 28
+      //outs() << "sizeof : " << sizeof(*val_ty) << " * 8 = " << sizeof(*val_ty) * 8 << "\n";
+      //outs() << "use_width " << use_width << " ; len = " << use_width/8 << "\n";
+      assert (use_width == bitcast_width * len);
+      Value* struct_val = instrExpr->getOperand(0);
+      int StructNumElements = struct_val->getType()->getPointerElementType()->getStructNumElements();
+      for (int i = 0; i < StructNumElements; ++i) {
+        //set the address value(i64 0) of list by myself
+        vector<Value *> IdxList;
+        IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+        IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
+        ArrayRef<Value*> list(IdxList);
+        GetElementPtrInst* from_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+             memcpy_from->getType())->getElementType(), memcpy_from, list, "", instr);
+        GetElementPtrInst* to_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+            struct_val->getType())->getElementType(), struct_val, list, "", instr);
+        LoadInst* load_ptr = new LoadInst(to_ptr, "", instr);
+        StoreInst* store_ptr = new StoreInst(load_ptr, from_ptr, instr);
+      }
+    }
+  } else if (instrExpr->getOpcode() == Instruction::GetElementPtr) {
+    WorkListDel->push_back(instr);
+    // %global = alloca %struct.str
+    // %1 = getelementptr inbounds %struct.str, %struct.str* %global, i64 0, i32 0
+    // call void @llvm.memcpy.p0i8.p0i8.i64(i8* nonnull %1, i8*
+    // getelementptr inbounds (%struct.str, %struct.str* @global, i64 0, i32 0), i64 48, i32 8, i1 false)
+    if (instrExpr->getOperand(0)->getType()->getPointerElementType()->isStructTy()
+        && instr->getPrevNode()->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+      int use_width = 0;
+      Type* val_ty = instrExpr->getOperand(0)->getType()->getPointerElementType();
+      vector<int> val_offset_list;
+      map<vector<int>, type_width> val_map;
+      structMemoryArrange(val_ty, val_offset_list, val_map, use_width);
+      assert (use_width == 8 * len);
+      //next code need to turn to function
+      Value* struct_val = instrExpr->getOperand(0);
+      int StructNumElements = struct_val->getType()->getPointerElementType()->getStructNumElements();
+      for (int i = 0; i < StructNumElements; ++i) {
+        //set the address value(i64 0) of list by myself
+        vector<Value *> IdxList;
+        IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+        IdxList.push_back( ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
+        ArrayRef<Value*> list(IdxList);
+        GetElementPtrInst* from_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+             memcpy_from->getType())->getElementType(), memcpy_from, list, "", instr);
+        GetElementPtrInst* to_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+            struct_val->getType())->getElementType(), struct_val, list, "", instr);
+        LoadInst* load_ptr = new LoadInst(to_ptr, "", instr);
+        StoreInst* store_ptr = new StoreInst(load_ptr, from_ptr, instr);
+      }
 
+    } else if (isa<llvm::ConstantExpr> (instrExpr->getOperand(0))) {
+      ConstantExpr* instrExpr_2 = llvm::dyn_cast<llvm::ConstantExpr>(instrExpr->getOperand(0));
+      //    %.sroa.2 = alloca [3 x i8], align 1
+      //    %.sroa.2.0.sroa_idx = getelementptr inbounds [3 x i8], [3 x i8]* %.sroa.2, i64 0, i64 0
+      //    call void @llvm.memcpy.p0i8.p0i8.i64(i8* %.sroa.2.0.sroa_idx, i8* getelementptr inbounds (i8,
+      //    i8* getelementptr inbounds (%struct.str, %struct.str* @global, i64 0, i32 0), i64 1), i64 3, i32 1, i1 true)
+      if (instrExpr_2->getOpcode() == Instruction::GetElementPtr &&
+          instrExpr_2->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+        memcpyToConstantExprGetelementPtr(instrExpr, instrExpr_2);
+      }
+      // call void @llvm.memcpy.p0i8.p0i8.i64(i8* %.sroa.523.0.sroa_idx, i8*
+      // getelementptr inbounds (i8, i8* bitcast (%struct.str* @global to i8*), i64 17), i64 3, i32 1, i1 true)
+      else if (instrExpr_2->getOpcode() == Instruction::BitCast &&
+          instrExpr_2->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+        memcpyToConstantExprGetelementPtr(instrExpr, instrExpr_2);
+      }
+    }
+  }
+  while (!WorkListDel->empty()) {
+    Instruction *instruction = WorkListDel->pop_back_val();
+    instruction->eraseFromParent();
+  }
+}
+void RemoveStruct::memcpyToConstantExprGetelementPtr(ConstantExpr* instrExpr, ConstantExpr* instrExpr_2) {
+  int instrExpr_2_bitwidth =  instrExpr_2->getType()->getPointerElementType()->getPrimitiveSizeInBits();
+  Value* instrExpr_1 = instrExpr->getOperand(1);
+  ConstantInt* width;
+  int num_bitwidth;
+  if (isa<llvm::ConstantInt>(instrExpr_1)) {
+    width = llvm::dyn_cast<llvm::ConstantInt>(instrExpr_1);
+    num_bitwidth = width->getSExtValue();
+  } else {
+    assert(0);
+  }
+  int actual_width = num_bitwidth * instrExpr_2_bitwidth;
+  bool flag = true;
+  int use_width = 0;
+  structArrangeTestFlag(instrExpr_2->getOperand(0)->getType()->getPointerElementType(), actual_width, flag, use_width);
+  if (flag == false) {
+      outs() <<"memcpy flag : flase " <<"\n";
+  } else {
+    assert(0);
+  }
+}
 
-void RemoveStruct::resolveStructVar(Value* &const_gv, GlobalVariable* &gv, string &gv_name) {
+void RemoveStruct::resolveStructVar(Value* const_gv, GlobalVariable* gv, string &gv_name) {
+  // To resolve struct variable into subvariables
   if (llvm::isa<llvm::ConstantStruct>(const_gv)) {
     ConstantStruct * global_element = llvm::dyn_cast<llvm::ConstantStruct>( const_gv);
     int global_nums = global_element->getNumOperands();
     for (int i = 0; i < global_nums; ++i) {
       llvm::Value* val_gv_op = global_element->getOperand(i);
       string layer_name = gv_name + to_string(i);
-      //outs() << " layer_name: " << layer_name << "\n";
-
       assert(llvm::isa<llvm::Constant>(val_gv_op));
       Constant* init = NULL;
       init = dyn_cast<llvm::Constant> (val_gv_op);
-
       GlobalVariable * gvar_new = new GlobalVariable(*module_,
           val_gv_op->getType(), false, GlobalValue::InternalLinkage, init, "", gv);
 
@@ -334,7 +833,7 @@ void RemoveStruct::resolveStructVar(Value* &const_gv, GlobalVariable* &gv, strin
   }
 }
 
-void RemoveStruct::resolveArrayVar(Value* &const_gv, GlobalVariable* &gv, string &gv_name) {
+void RemoveStruct::resolveArrayVar(Value* const_gv, GlobalVariable* gv, string &gv_name) {
   if (llvm::isa<llvm::ConstantArray>(const_gv)) {
     ConstantArray * constantArray = llvm::dyn_cast<llvm::ConstantArray>(const_gv);
     outs() << "ArrayVar numbers : " << constantArray->getType()->getArrayNumElements() << "\n";
@@ -368,7 +867,7 @@ void RemoveStruct::resolveGlobalVar(){
     GlobalVariable *gv = &*gv_iter;
     //string gv_name = gv->getName().str();
     if (gv->getType()->getPointerElementType()->isAggregateType()) {
-      outs() << "gv->getName() " <<gv->getName() << "\n";
+      //outs() << "gv->getName() " <<gv->getName() << "\n";
       string gv_name = getLabel(gv);
       if (gv->hasInitializer()) {
         Value *const_gv = gv->getInitializer();
@@ -379,7 +878,7 @@ void RemoveStruct::resolveGlobalVar(){
           resolveStructVar(const_gv, gv, gv_name);
         } else if (const_gv->getType()->isArrayTy()) {
           resolveArrayVar(const_gv, gv, gv_name);
-          outs() << gv_name << " is Array Type!\n";
+          //outs() << gv_name << " is Array Type!\n";
         } else if (const_gv->getType()->isVectorTy()) {
           printf(" not consider the VectorTy!\n");
         } else {
@@ -405,15 +904,17 @@ vector<Value *> RemoveStruct::valueInstr(const llvm::Instruction* instr) {
   return IdxList;
 }
 
-void RemoveStruct::replaceGlobalVarInstr(){
+void RemoveStruct::GlobalVarGetelementptr(){
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
     Function &F = *f;
     for (Function::iterator b = F.begin(); b != F.end(); ++b) {
       llvm::BasicBlock &B = *b;
       for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
         llvm::Instruction* instr = &*itr;
-        // Case : getelementptr %struct.str, %struct.str* %globalVariable, i64 0, i32 2
         if (instr->getOpcode() == llvm::Instruction::GetElementPtr && isa<llvm::GlobalVariable>(instr->getOperand(0))) {
+          //replaceGlobalvarGetelementprt(instr);
+
+          // Case : getelementptr %struct.str, %struct.str* %globalVariable, i64 0, i32 2
           if (instr->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
             if (instr->getNumOperands() >= 3) {
               llvm::Value* val_op = instr->getOperand(0);
@@ -428,6 +929,7 @@ void RemoveStruct::replaceGlobalVarInstr(){
                 GetElementPtrInst* ptrInst = GetElementPtrInst::CreateInBounds(
                    dyn_cast<PointerType> (new_var->getType())->getElementType(),new_var, list, "");
                 ReplaceInstWithInst(B.getInstList(), itr, ptrInst);
+                //ReplaceInstWithInst(instr, ptrInst);
               } else {
                 outs() << "This Struct case does not match!  "  << getLabel(instr)<< "\n" ;
               }
@@ -455,6 +957,7 @@ void RemoveStruct::replaceGlobalVarInstr(){
                     GetElementPtrInst* ptrInst = GetElementPtrInst::CreateInBounds(
                        dyn_cast<PointerType> (new_var->getType())->getElementType(),new_var, list, "");
                     ReplaceInstWithInst(B.getInstList(), itr, ptrInst);
+                    //ReplaceInstWithInst(instr, ptrInst);
                   }else {
                     outs() << "This Array case does not match!  "  << getLabel(instr)<< "\n" ;
                   }
@@ -473,6 +976,237 @@ void RemoveStruct::replaceGlobalVarInstr(){
     }
   }
 }
+
+void RemoveStruct::replaceGlobalvarGetelementprt(Instruction* instr) {
+
+}
+
+void RemoveStruct::DoubleGetElementPtr(){
+  SmallVector<Instruction*,128> *ListSet=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *ListDel=new SmallVector<Instruction*,128>();
+  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
+    Function &F = *f;
+    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
+      llvm::BasicBlock &B = *b;
+      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
+        llvm::Instruction* instr = &*itr;
+        if (instr->getOpcode() == llvm::Instruction::GetElementPtr &&
+            instr->getOperand(0)->getType()->getPointerElementType()->isStructTy() &&
+            instr->getNumOperands() == 2) {
+          bool del = false;
+          for (Value::user_iterator UI = instr->user_begin(), E =instr->user_end(); UI != E; ++UI) {
+            User *U = *UI;
+            assert(isa<Instruction> (U));
+            Instruction* CI = dyn_cast<Instruction> (U);
+            //To process case : %7 = getelementptr %struct.str* %1, i64 0; %8 = getelementptr %struct.point* %7, i64 0, i32 0
+            if (CI->getOpcode() == llvm::Instruction::GetElementPtr) {
+              del = true;
+              ListSet->push_back(CI);
+              outs() << "instr->getOperand(0) " << getLabel(instr->getOperand(0)) << "\n";
+              outs() << "CI->getOperand(0) " << getLabel(CI->getOperand(0)) << "\n";
+            }
+          }
+          while (!ListSet->empty()) {
+            Instruction *instruction = ListSet->pop_back_val();
+            instruction->setOperand(0, instr->getOperand(0));
+          }
+          if (del == true) {ListDel->push_back(instr);}
+        }
+      }
+    }
+  }
+
+  while (!ListDel->empty()) {
+    Instruction *instruction = ListDel->pop_back_val();
+    instruction->eraseFromParent();
+  }
+}
+
+void RemoveStruct::replaceDoubleGetElementPtr(Instruction* instr) {
+  SmallVector<Instruction*,128> *ListSet=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *ListDel=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *WorkListCI=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *WorkListPtr=new SmallVector<Instruction*,128>();
+
+  //To process case : %7 = getelementptr %struct.str* %1, i64 0; %8 = getelementptr %struct.point* %7, i64 0, i32 0
+  if (instr->getNumOperands() == 2 && instr->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
+    if (instr->getNumUses() > 0) {ListDel->push_back(instr);}
+    //llvm::Value* val_op = instr;
+    for (Value::user_iterator UI = instr->user_begin(), E =instr->user_end(); UI != E; ++UI) {
+      User *U = *UI;
+      assert(isa<Instruction> (U));
+      Instruction* CI = dyn_cast<Instruction> (U);
+      if (CI->getOpcode() == llvm::Instruction::GetElementPtr) {
+        ListSet->push_back(CI);
+        outs() << "instr->getOperand(0) " << getLabel(instr->getOperand(0)) << "\n";
+       //CI->setOperand(0, instr->getOperand(0));
+        outs() << "CI->getOperand(0) " << getLabel(CI->getOperand(0)) << "\n";
+      }
+    }
+    while (!ListSet->empty()) {
+      Instruction *instruction = ListSet->pop_back_val();
+      instruction->setOperand(0, instr->getOperand(0));
+    }
+  }
+  // To process case : %15 = getelementptr [31 x %struct.Tr_3D], [31 x %struct.Tr_3D]* @tr_3ds, i64 0, i64 %14
+  //                   %16 = getelementptr  %struct.Tr_3D, %struct.Tr_3D* %15, i64 0, i32 0
+  else if (instr->getNumOperands() == 3 && instr->getOperand(0)->getType()->getPointerElementType()->isArrayTy()) {
+    if (instr->getNumUses() > 0) {ListDel->push_back(instr);}
+    for (Value::user_iterator UI = instr->user_begin(), E =instr->user_end(); UI != E; ++UI) {
+      vector<Value *> IdxList;
+      for (int j = 1; j < instr->getNumOperands(); ++j) {
+        IdxList.push_back(instr->getOperand(j));
+      }
+      User *U = *UI;
+      assert(isa<Instruction> (U));
+      Instruction* CI = dyn_cast<Instruction> (U);
+      if (CI->getOpcode() == llvm::Instruction::GetElementPtr && CI->getNumOperands()>=3) {
+        for (int i = 2; i < CI->getNumOperands(); ++i) {
+          IdxList.push_back(CI->getOperand(i));
+        }
+        ArrayRef<Value*> list(IdxList);
+        GetElementPtrInst* ptrInst =GetElementPtrInst::CreateInBounds(
+            instr->getOperand(0)->getType()->getPointerElementType(),
+            instr->getOperand(0), list, "");
+        WorkListCI->push_back(CI);
+        WorkListPtr->push_back(ptrInst);
+      }
+    }
+  }
+
+  while (!WorkListCI->empty()) {
+    Instruction *CI = WorkListCI->pop_back_val();
+    Instruction *Ptr = WorkListPtr->pop_back_val();
+    ReplaceInstWithInst(CI, Ptr);
+  }
+  while (!ListDel->empty()) {
+    Instruction *instruction = ListDel->pop_back_val();
+    instruction->eraseFromParent();
+  }
+}
+
+void RemoveStruct::replaceAllocaStruct(Instruction* allocaInst,SmallVector<Instruction*,128> *ListGetELoadStore){
+  //To split %struct %x, i64 0 into  x,0,0
+  // %14 = getelementptr inbounds %struct.point, %struct.point* %4, i64 0
+  // %15 = getelementptr inbounds %struct.point, %struct.point* @3, i64 0
+  // %16 = load %struct.point, %struct.point* %15
+  // store %struct.point %16, %struct.point* %14
+  //-> %14 = gete %4, i64 0, i32 1;   %16 = gete @3, i64 0, i32 1;
+  //-> %18 = load %struct* %16;       store %struct %18, %struct.point* %14
+  //-> %15 = gete %4, i64 0, i32 2;   %17 = gete @3, i64 0, i32 2;
+  //-> %19 = load %struct* %17;       store %struct %19, %struct.point* %15
+  for (Value::user_iterator UI = allocaInst->user_begin(), E =allocaInst->user_end(); UI != E; ++UI) {
+    User *alloca_user = *UI;
+    assert(isa<Instruction> (alloca_user));
+    Instruction* alloca_user_inst = dyn_cast<Instruction> (alloca_user);
+    //just to find the specific instruction which has 2 getNumOperands and NextNode Store
+    if (alloca_user_inst->getNumOperands() == 2 &&
+        alloca_user_inst->getNextNode()->getOpcode() == llvm::Instruction::GetElementPtr &&
+        alloca_user_inst->getNextNode()->getNextNode()->getOpcode() == llvm::Instruction::Load &&
+        alloca_user_inst->getNextNode()->getNextNode()->getNextNode()->getOpcode() == llvm::Instruction::Store) {
+      ListGetELoadStore->push_back(alloca_user_inst);
+      ListGetELoadStore->push_back(alloca_user_inst->getNextNode());
+      ListGetELoadStore->push_back(alloca_user_inst->getNextNode()->getNextNode());
+      ListGetELoadStore->push_back(alloca_user_inst->getNextNode()->getNextNode()->getNextNode());
+
+      //Value* struct_val = alloca_user_inst->getNextNode()->getOperand(0);
+      int struct_val_num = alloca_user_inst->getType()->getPointerElementType()->getStructNumElements();
+      for (int i = 0; i < struct_val_num; ++i) {
+        //set the address value(i64 0) of list by myself
+        vector<Value *> IdxList;
+        IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+        IdxList.push_back(ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
+        ArrayRef<Value*> list(IdxList);
+        GetElementPtrInst* from_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+            alloca_user_inst->getOperand(0)->getType())->getElementType(), alloca_user_inst->getOperand(0), list, "", alloca_user_inst);
+        GetElementPtrInst* to_ptr =GetElementPtrInst::CreateInBounds(dyn_cast<PointerType>(
+            alloca_user_inst->getNextNode()->getOperand(0)->getType())->getElementType(),
+            alloca_user_inst->getNextNode()->getOperand(0), list, "", alloca_user_inst);
+        LoadInst* load_ptr = new LoadInst(to_ptr, "", alloca_user_inst);
+        StoreInst* store_ptr = new StoreInst(load_ptr, from_ptr, alloca_user_inst);
+      }
+
+//      if (isa<llvm::ConstantStruct>(struct_val)){
+//        ConstantStruct * struct_element = llvm::dyn_cast<llvm::ConstantStruct>(struct_val);
+//        for (int i = 0; i < struct_val_num; ++i) {
+//          llvm::Value* val_gv_op = struct_element->getOperand(i);
+//          //set the address value(i64 0) of list by myself
+//          vector<Value *> IdxList;
+//          IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
+//          IdxList.push_back(ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
+//          ArrayRef<Value*> list(IdxList);
+//          GetElementPtrInst* ptrInst_new =GetElementPtrInst::CreateInBounds(
+//             dyn_cast<PointerType> (alloca_user_inst->getOperand(0)->getType())->getElementType(),
+//             alloca_user_inst->getOperand(0), list, "", alloca_user_inst);
+//          StoreInst *ptr = new StoreInst(val_gv_op, ptrInst_new,alloca_user_inst);
+//        }
+//      }
+    }
+  }
+}
+
+
+void RemoveStruct::AllocaInstStruct() {
+  SmallVector<Instruction*,128> *ListAllocaInst=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *ListDel=new SmallVector<Instruction*,128>();
+  SmallVector<Instruction*,128> *ListGetELoadStore=new SmallVector<Instruction*,128>();
+  map<std::string /*Key*/, Value * /*Value*/> alloca_keymap_;
+  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
+    Function &F = *f;
+    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
+      llvm::BasicBlock &B = *b;
+      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
+        llvm::Instruction* instr = &*itr;
+        if (llvm::isa<llvm::AllocaInst>(instr)) {
+          if (instr->getType()->getPointerElementType()->isStructTy()) {
+            ListAllocaInst->push_back(instr);
+            llvm::AllocaInst* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(instr);
+            //outs() << "getAllocatedType Type : " << *allocaInst->getAllocatedType() <<"\n";
+            //To replace allocaInst into subVariables
+            int StructNumElements = allocaInst->getType()->getPointerElementType()->getStructNumElements();
+            for (int i = 0; i < StructNumElements; ++i) {
+              Type* StructElementType = allocaInst->getType()->getPointerElementType()->getStructElementType(i);
+              string variable_name = getLabel(instr) + to_string(i);
+              outs() << "alloca_struct variable name " << variable_name << "\n";
+              AllocaInst* alloca = new AllocaInst(StructElementType, 0, "", instr);
+              if (alloca_keymap_.find(variable_name) == alloca_keymap_.end()) {
+                alloca_keymap_[variable_name] = alloca;
+              }
+            }
+            //To split %struct %x, i64 0 into  x,0,0
+            replaceAllocaStruct(allocaInst, ListGetELoadStore);
+          }
+        }
+      }
+    }
+  }
+  replaceAllocaRelatedInstrStruct(alloca_keymap_);
+  DoubleGetElementPtr();
+  //To remove getelementptr & store instructions
+  while (!ListGetELoadStore->empty()) {
+    Instruction *instr = ListGetELoadStore->pop_back_val();
+    assert(instr->getNumUses() == 0);
+    instr->eraseFromParent();
+  }
+  //TO remove all uses of instruction and itself alloca
+  while (!ListAllocaInst->empty()) {
+    Instruction *instruction = ListAllocaInst->pop_back_val();
+    //To remove all uses of instruction alloca
+    for (Value::user_iterator UI = instruction->user_begin(), E =instruction->user_end(); UI != E; ++UI) {
+      User *U = *UI;
+      assert(isa<Instruction> (U));
+      Instruction* CI = dyn_cast<Instruction> (U);
+      ListDel->push_back(CI);
+    }
+    while (!ListDel->empty()) {
+      Instruction *instr_move = ListDel->pop_back_val();
+      instr_move->eraseFromParent();
+    }
+    instruction->eraseFromParent();
+  }
+  alloca_keymap_.clear();
+}
+
 
 void RemoveStruct::replaceAllocaRelatedInstrStruct(map<std::string, Value*> alloca_keymap_){
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
@@ -505,175 +1239,8 @@ void RemoveStruct::replaceAllocaRelatedInstrStruct(map<std::string, Value*> allo
   }
 }
 
-void RemoveStruct::replaceDoubleGetElementPtr(){
-  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
-  SmallVector<Instruction*,128> *WorkListMove=new SmallVector<Instruction*,128>();
-  SmallVector<Instruction*,128> *WorkListCI=new SmallVector<Instruction*,128>();
-  SmallVector<Instruction*,128> *WorkListPtr=new SmallVector<Instruction*,128>();
-  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
-    Function &F = *f;
-    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
-      llvm::BasicBlock &B = *b;
-      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
-        llvm::Instruction* instr = &*itr;
-        if (instr->getOpcode() == llvm::Instruction::GetElementPtr
-            && instr->getNextNode()->getOpcode() == llvm::Instruction::GetElementPtr
-            && instr->getNextNode()->getOperand(0) == instr) {
-          //To process case : %7 = getelementptr %struct.str* %1, i64 0; %8 = getelementptr %struct.point* %7, i64 0, i32 0
-          if (instr->getNumOperands() == 2 && instr->getOperand(0)->getType()->getPointerElementType()->isStructTy()) {
-            if (instr->getNumUses() > 0) {WorkListMove->push_back(instr);}
-            //llvm::Value* val_op = instr;
-            for (Value::user_iterator UI = instr->user_begin(), E =instr->user_end(); UI != E; ++UI) {
-              User *U = *UI;
-              assert(isa<Instruction> (U));
-              Instruction* CI = dyn_cast<Instruction> (U);
-              if (CI->getOpcode() == llvm::Instruction::GetElementPtr) {
-                WorkListLoad->push_back(CI);
-                outs() << "instr->getOperand(0) " << getLabel(instr->getOperand(0)) << "\n";
-               //CI->setOperand(0, instr->getOperand(0));
-                outs() << "CI->getOperand(0) " << getLabel(CI->getOperand(0)) << "\n";
-              }
-            }
-            while (!WorkListLoad->empty()) {
-              Instruction *instruction = WorkListLoad->pop_back_val();
-              instruction->setOperand(0, instr->getOperand(0));
-            }
-          }
-          // To process case : %15 = getelementptr [31 x %struct.Tr_3D], [31 x %struct.Tr_3D]* @tr_3ds, i64 0, i64 %14
-          //                   %16 = getelementptr  %struct.Tr_3D, %struct.Tr_3D* %15, i64 0, i32 0
-          else if (instr->getNumOperands() == 3 && instr->getOperand(0)->getType()->getPointerElementType()->isArrayTy()) {
-            if (instr->getNumUses() > 0) {WorkListMove->push_back(instr);}
-            for (Value::user_iterator UI = instr->user_begin(), E =instr->user_end(); UI != E; ++UI) {
-              vector<Value *> IdxList;
-              for (int j = 1; j < instr->getNumOperands(); ++j) {
-                IdxList.push_back(instr->getOperand(j));
-              }
-              User *U = *UI;
-              assert(isa<Instruction> (U));
-              Instruction* CI = dyn_cast<Instruction> (U);
-              if (CI->getOpcode() == llvm::Instruction::GetElementPtr && CI->getNumOperands()>=3) {
-                for (int i = 2; i < CI->getNumOperands(); ++i) {
-                  IdxList.push_back(CI->getOperand(i));
-                }
-                ArrayRef<Value*> list(IdxList);
-                GetElementPtrInst* ptrInst =GetElementPtrInst::CreateInBounds(
-                    instr->getOperand(0)->getType()->getPointerElementType(),
-                    instr->getOperand(0), list, "");
-                WorkListCI->push_back(CI);
-                WorkListPtr->push_back(ptrInst);
-              }
-            }
-          }
-        }
-      }
-    }
-  }
-  while (!WorkListCI->empty()) {
-    Instruction *CI = WorkListCI->pop_back_val();
-    Instruction *Ptr = WorkListPtr->pop_back_val();
-    ReplaceInstWithInst(CI, Ptr);
-  }
-  while (!WorkListMove->empty()) {
-    Instruction *instruction = WorkListMove->pop_back_val();
-    instruction->eraseFromParent();
-  }
-}
 
-void RemoveStruct::replaceAllocaStruct(Instruction* allocaInst,SmallVector<Instruction*,128> *WorkListGetEStore){
-
-  //To split %struct %x, i64 0 into  x,0,0
-  for (Value::user_iterator UI = allocaInst->user_begin(), E =allocaInst->user_end(); UI != E; ++UI) {
-    User *alloca_user = *UI;
-    assert(isa<Instruction> (alloca_user));
-    Instruction* alloca_user_inst = dyn_cast<Instruction> (alloca_user);
-    //just to find the specific instruction which has 2 getNumOperands and NextNode Store
-    if (alloca_user_inst->getNumOperands() == 2) {
-      if (alloca_user_inst->getNextNode()->getOpcode() == llvm::Instruction::Store){
-        WorkListGetEStore->push_back(alloca_user_inst);
-        WorkListGetEStore->push_back(alloca_user_inst->getNextNode());
-        Value* struct_val = alloca_user_inst->getNextNode()->getOperand(0);
-        int struct_val_num = struct_val->getType()->getStructNumElements();
-        if (isa<llvm::ConstantStruct>(struct_val)){
-          ConstantStruct * struct_element = llvm::dyn_cast<llvm::ConstantStruct>(struct_val);
-          for (int i = 0; i < struct_val_num; ++i) {
-            llvm::Value* val_gv_op = struct_element->getOperand(i);
-            //set the address value(i64 0) of list by myself
-            vector<Value *> IdxList;
-            IdxList.push_back(ConstantInt::get(Type::getInt64Ty(module_->getContext()), 0));
-            IdxList.push_back(ConstantInt::get(Type::getInt32Ty(module_->getContext()), i));
-            ArrayRef<Value*> list(IdxList);
-            GetElementPtrInst* ptrInst_new =GetElementPtrInst::CreateInBounds(
-               dyn_cast<PointerType> (alloca_user_inst->getOperand(0)->getType())->getElementType(),
-               alloca_user_inst->getOperand(0), list, "", alloca_user_inst);
-            StoreInst *ptr = new StoreInst(val_gv_op, ptrInst_new,alloca_user_inst);
-          }
-        }
-      }
-    }
-  }
-}
-
-
-void RemoveStruct::replaceAllocaInstrStruct() {
-  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
-  SmallVector<Instruction*,128> *WorkListMove=new SmallVector<Instruction*,128>();
-  SmallVector<Instruction*,128> *WorkListGetEStore=new SmallVector<Instruction*,128>();
-  map<std::string /*Key*/, Value * /*Value*/> alloca_keymap_;
-  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
-    Function &F = *f;
-    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
-      llvm::BasicBlock &B = *b;
-      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
-        llvm::Instruction* instr = &*itr;
-        if (llvm::isa<llvm::AllocaInst>(instr)) {
-          if (instr->getType()->getPointerElementType()->isStructTy()) {
-            WorkListLoad->push_back(instr);
-            llvm::AllocaInst* allocaInst = llvm::dyn_cast<llvm::AllocaInst>(instr);
-            outs() << "getAllocatedType Type : " << *allocaInst->getAllocatedType() <<"\n";
-            //To replace allocaInst into subVariables
-            int StructNumElements = allocaInst->getType()->getPointerElementType()->getStructNumElements();
-            for (int i = 0; i < StructNumElements; ++i) {
-              Type* StructElementType = allocaInst->getType()->getPointerElementType()->getStructElementType(i);
-              string variable_name = getLabel(instr) + to_string(i);
-              outs() << "alloca_struct variable name " << variable_name << "\n";
-              AllocaInst* alloca = new AllocaInst(StructElementType, 0, "", instr);
-              if (alloca_keymap_.find(variable_name) == alloca_keymap_.end()) {
-                alloca_keymap_[variable_name] = alloca;
-              }
-            }
-            //To split %struct %x, i64 0 into  x,0,0
-            replaceAllocaStruct(allocaInst, WorkListGetEStore);
-          }
-        }
-      }
-    }
-  }
-  replaceAllocaRelatedInstrStruct(alloca_keymap_);
-  replaceDoubleGetElementPtr();
-  //To remove getelementptr & store instructions
-  while (!WorkListGetEStore->empty()) {
-    Instruction *instr = WorkListGetEStore->pop_back_val();
-    assert(instr->getNumUses() == 0);
-    instr->eraseFromParent();
-  }
-  //TO remove all uses of instruction and itself alloca
-  while (!WorkListLoad->empty()) {
-    Instruction *instruction = WorkListLoad->pop_back_val();
-    //To remove all uses of instruction alloca
-    for (Value::user_iterator UI = instruction->user_begin(), E =instruction->user_end(); UI != E; ++UI) {
-      User *U = *UI;
-      assert(isa<Instruction> (U));
-      Instruction* CI = dyn_cast<Instruction> (U);
-      WorkListMove->push_back(CI);
-    }
-    while (!WorkListMove->empty()) {
-      Instruction *instr_move = WorkListMove->pop_back_val();
-      instr_move->eraseFromParent();
-    }
-    instruction->eraseFromParent();
-  }
-  alloca_keymap_.clear();
-}
+//void RemoveStruct::replaceAllocaInstStruct(Instruction* instr) {}
 
 void RemoveStruct::replaceAllocaRelatedInstrArray(map<std::string, Value*> alloca_keymap_){
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
@@ -763,179 +1330,49 @@ void RemoveStruct::replaceAllocaInstrArray() {
 }
 
 void RemoveStruct::splitLoad() {
+  SmallVector<Instruction*,128> *WorkListLoad=new SmallVector<Instruction*,128>();
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
     Function &F = *f;
     for (Function::iterator b = F.begin(); b != F.end(); ++b) {
       llvm::BasicBlock &B = *b;
       for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
         llvm::Instruction* instr = &*itr;
-        //Process this cast: "load i64, i64* getelementptr"
         if (instr->getOpcode() == llvm::Instruction::Load) {
           if (isa<llvm::ConstantExpr> (instr->getOperand(0))) {
             llvm::ConstantExpr* constExpr = llvm::dyn_cast<llvm::ConstantExpr>(instr->getOperand(0));
             if (constExpr->getOpcode() == llvm::Instruction::GetElementPtr) {
-              Instruction* getE_inst = constExpr->getAsInstruction();
-              getE_inst->insertBefore(instr);
-              //outs() << "getE_inst->getNumUses() " << constExpr->getNumUses() << "\n";
-              constExpr->replaceAllUsesWith(getE_inst);
+              //Process this case: "load i64, i64* getelementptr"
+              WorkListLoad->push_back(instr);
             } else if(constExpr->getOpcode() == llvm::Instruction::BitCast) {
-              Instruction* bitC_inst = constExpr->getAsInstruction();
-              bitC_inst->insertBefore(instr);
-              //outs() << "bitC_inst " << constExpr->getNumUses() << "\n";
-              constExpr->replaceAllUsesWith(bitC_inst);
+              //Process this case: "load i64, i64* bitcast"
+              WorkListLoad->push_back(instr);
             }
           }
         }
       }
     }
   }
+  while (!WorkListLoad->empty()) {
+    Instruction *instr = WorkListLoad->pop_back_val();
+    llvm::ConstantExpr* constExpr = llvm::dyn_cast<llvm::ConstantExpr>(instr->getOperand(0));
+    Instruction* get_inst = constExpr->getAsInstruction();
+    get_inst->insertBefore(instr);
+    //outs() << "getE_inst->getNumUses() " << constExpr->getNumUses() << "\n";
+    instr->setOperand(0, get_inst);
+  }
 }
 
-void RemoveStruct::splitBitCast(){
+void RemoveStruct::splitStore() {
+  SmallVector<Instruction*,128> *WorkListStore=new SmallVector<Instruction*,128>();
   for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
     Function &F = *f;
     for (Function::iterator b = F.begin(); b != F.end(); ++b) {
       llvm::BasicBlock &B = *b;
       for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
         llvm::Instruction* instr = &*itr;
-        //Process this cast: "bitcast %struct.point* getelementptr"
-        if (instr->getOpcode() == llvm::Instruction::BitCast) {
-          if (isa<llvm::ConstantExpr> (instr->getOperand(0))) {
-            llvm::ConstantExpr* constExpr = llvm::dyn_cast<llvm::ConstantExpr>(instr->getOperand(0));
+        if (instr->getOpcode() == llvm::Instruction::Store) {
+          if (isa<llvm::ConstantExpr> (instr->getOperand(1))){
+            llvm::ConstantExpr* constExpr = llvm::dyn_cast<llvm::ConstantExpr>(instr->getOperand(1));
             if (constExpr->getOpcode() == llvm::Instruction::GetElementPtr) {
-              //Type *Ty = instr->getType()->getPointerElementType();
-              Instruction* getE_inst = constExpr->getAsInstruction();
-              getE_inst->insertBefore(instr);
-              //constExpr->replaceAllUsesWith(getE_inst);
-              BitCastInst *bitcast = new BitCastInst(getE_inst, instr->getType(), "");
-              ReplaceInstWithInst(B.getInstList(), itr, bitcast);
-//              outs() << "getE_inst->getNumUses() " << constExpr->getNumUses() << "\n";
-            }
-          }
-        }
-      }
-    }
-  }
-}
-
-void RemoveStruct::changeBC(){
-  splitLoad();
-  splitBitCast();
-  removeLifetime();
-  changeMemcpy();
-  changeBitCast();
-}
-
-void RemoveStruct::replaceStructInstr(){
-  Optimizer opt;
-  opt.reset();
-  opt.setOutputFileName("before_replace_double_gep.bc");
-  opt.setNoOutput(false);
-  opt.optimize(*module_);
-  replaceDoubleGetElementPtr();
-  opt.reset();
-  opt.setOutputFileName("after_replace_double_gep.bc");
-  opt.setNoOutput(false);
-  opt.optimize(*module_);
-
-  replaceGlobalVarInstr();
-  //next to process constant struct variable
-  replaceAllocaInstrStruct();
-  replaceAllocaInstrArray();
-//  while (!WorkListGV->empty()) {
-//    GlobalVariable *gv = WorkListGV->pop_back_val();
-//    outs() << "gv: " << getLabel(gv) << "\n";
-//    gv->eraseFromParent();
-//  }
-}
-
-void RemoveStruct::replaceStruct(){
-  resolveGlobalVar();
-  replaceStructInstr();
-  keymap_.clear();
-}
-
-void RemoveStruct::RemoveStructMain(){
-  changeBC();
-  outs() << "Start to loop structVariable!  " << "\n";
-//  while (findStruct()){
-//    replaceStruct();
-//  }
-
-  replaceStruct();
-}
-
-
-bool RemoveStruct::findStruct(){
-  for (Module::iterator f = module_->begin(), FE = module_->end(); f != FE; ++f) {
-    Function &F = *f;
-    for (Function::iterator b = F.begin(); b != F.end(); ++b) {
-      llvm::BasicBlock &B = *b;
-      for (llvm::BasicBlock::iterator itr = B.begin(); itr != B.end(); ++itr) {
-        llvm::Instruction* instr = &*itr;
-        if (instr->getType()->isPointerTy()){
-          if (instr->getType()->getPointerElementType()->isStructTy()){
-            return true;
-          }
-        } else if (instr->getType()->isStructTy()) {
-          return true;
-        }
-        for (int i = 0; i < instr->getNumOperands(); ++i){
-          Value* vir_op = instr->getOperand(i);
-          if (vir_op->getType()->isPointerTy()){
-            if (vir_op->getType()->getPointerElementType()->isStructTy()){
-              return true;
-            }
-          } else if (vir_op->getType()->isStructTy()) {
-            return true;
-          }
-        }
-
-      }
-    }
-  }
-  return false;
-}
-
-bool ESLPass::runOnModule(llvm::Module &m) {
-//  StructXXX temp(m);
-//  temp.removestruct;
-
-#if 1
-  SmallVector<Instruction*,128> *WorkListUserOfLoad=new SmallVector<Instruction*,128>();
-  RemoveStruct* RemoveStr = new RemoveStruct(&m);
-  //RemoveStr->structGlobalVarible();
-  //RemoveStr->removeFun();
-  RemoveStr->RemoveStructMain();
-  Optimizer opt;
-  opt.reset();
-  opt.setOutputFileName("rm_struct.bc");
-  opt.setNoOutput(false);
-  opt.optimize(m);
-#endif
-
-  // 1) DGBuilder
-  Design *design = getAnalysis<DGBuilder> ().getDesign();
-
-  // 2) DG optimization
-//  DGOptimizer dg_opt(design);
-//  dg_opt.run();
-
-  // After minimizing bit width, genTimingInfo for each node
-
-  // Build timing & resource edge
-
-  for (auto i = design->begin(); i != design->end(); ++i) {
-		// 3) Run scheduling
-		SDCScheduler sdc_scheduler(*i, getClockPeriod());
-		sdc_scheduler.run();
-		SchMap *sch_map = sdc_scheduler.getSchMap();
-		// 4) Binding
-
-		// 5) Build STG
-
-		// 6) Generate Verilog
-	}
-}
-
-} // end of namespace esl
+              //Process this case: "store i64 %1, i64* getelementptr"
+              WorkListStore->
